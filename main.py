@@ -9,78 +9,239 @@ import re
 import os 
 from pprint import pprint
 from dotenv import load_dotenv
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import pickle
+from data.product import PRODUCT_CATALOG
+
 # Load environment variables from .env file
 load_dotenv()
 
-# Sample product catalog
-PRODUCT_CATALOG = {
-    "smartphones": [
-        {
-            "id": "phone1", "name": "iPhone 15 Pro", "price": 999, "brand": "Apple", 
-            "storage": "128GB", "camera": "48MP Pro", "battery": "3274mAh", 
-            "features": ["5G", "Face ID", "Wireless Charging", "Water Resistant"]
-        },
-        {
-            "id": "phone2", "name": "Samsung Galaxy S24 Ultra", "price": 1199, "brand": "Samsung",
-            "storage": "256GB", "camera": "200MP", "battery": "5000mAh",
-            "features": ["5G", "S Pen", "Wireless Charging", "AI Photography"]
-        },
-        {
-            "id": "phone3", "name": "Google Pixel 8 Pro", "price": 899, "brand": "Google",
-            "storage": "128GB", "camera": "50MP", "battery": "5050mAh",
-            "features": ["5G", "AI Features", "Night Photography", "Fast Charging"]
-        },
-        {
-            "id": "phone4", "name": "OnePlus 12", "price": 699, "brand": "OnePlus",
-            "storage": "256GB", "camera": "50MP", "battery": "5400mAh",
-            "features": ["5G", "Fast Charging", "Gaming Mode", "OxygenOS"]
-        }
-    ],
-    "laptops": [
-        {
-            "id": "laptop1", "name": "MacBook Air M3 13\"", "price": 1299, "brand": "Apple",
-            "processor": "M3 Chip", "ram": "16GB", "storage": "512GB SSD", "screen": "13.6\"",
-            "features": ["All-day battery", "Lightweight", "Retina Display", "Touch ID"]
-        },
-        {
-            "id": "laptop2", "name": "Dell XPS 13 Plus", "price": 1399, "brand": "Dell",
-            "processor": "Intel i7", "ram": "16GB", "storage": "1TB SSD", "screen": "13.4\"",
-            "features": ["4K Display", "Premium Design", "Thunderbolt 4", "Windows 11"]
-        },
-        {
-            "id": "laptop3", "name": "ThinkPad X1 Carbon Gen 11", "price": 1599, "brand": "Lenovo",
-            "processor": "Intel i7", "ram": "32GB", "storage": "1TB SSD", "screen": "14\"",
-            "features": ["Business Grade", "Durable", "Long Battery", "4G LTE Option"]
-        },
-        {
-            "id": "laptop4", "name": "ASUS ROG Zephyrus G14", "price": 1199, "brand": "ASUS",
-            "processor": "AMD Ryzen 9", "ram": "16GB", "storage": "1TB SSD", "screen": "14\"",
-            "features": ["Gaming Laptop", "RTX 4060", "High Refresh Rate", "RGB Keyboard"]
-        }
-    ],
-    "headphones": [
-        {
-            "id": "headphone1", "name": "AirPods Pro 2", "price": 249, "brand": "Apple",
-            "type": "wireless earbuds", "noise_canceling": True, "battery": "30 hours",
-            "features": ["Spatial Audio", "Transparency Mode", "MagSafe Case", "Water Resistant"]
-        },
-        {
-            "id": "headphone2", "name": "Sony WH-1000XM5", "price": 399, "brand": "Sony",
-            "type": "over-ear wireless", "noise_canceling": True, "battery": "30 hours",
-            "features": ["Premium ANC", "LDAC Audio", "Touch Controls", "Comfortable"]
-        },
-        {
-            "id": "headphone3", "name": "Bose QuietComfort 45", "price": 329, "brand": "Bose",
-            "type": "over-ear wireless", "noise_canceling": True, "battery": "24 hours",
-            "features": ["Legendary ANC", "Comfortable Fit", "Clear Calls", "App Control"]
-        },
-        {
-            "id": "headphone4", "name": "Sennheiser Momentum 4", "price": 379, "brand": "Sennheiser",
-            "type": "over-ear wireless", "noise_canceling": True, "battery": "60 hours",
-            "features": ["Audiophile Sound", "Adaptive ANC", "Smart Controls", "Premium Materials"]
-        }
-    ]
-}
+class ProductRAG:
+    """Agentic RAG system for intelligent product retrieval"""
+    
+    def __init__(self, product_catalog: Dict[str, List[Dict]], model):
+        self.product_catalog = product_catalog
+        self.model = model
+        self.products_flat = self._flatten_products()
+        self.vectorizer = None
+        self.product_vectors = None
+        self._build_product_index()
+    
+    def _flatten_products(self) -> List[Dict]:
+        """Flatten the product catalog into a single list"""
+        products = []
+        for category, product_list in self.product_catalog.items():
+            for product in product_list:
+                product_copy = product.copy()
+                product_copy['category'] = category
+                products.append(product_copy)
+
+        return products
+    
+    def _build_product_index(self):
+        """Build TF-IDF index for semantic search"""
+        # Create searchable text for each product
+        product_texts = []
+        for product in self.products_flat:
+            # Combine all relevant text fields
+            text_parts = [
+                product.get('name', ''),
+                product.get('brand', ''),
+                product.get('category', ''),
+                product.get('description', ''),
+                ' '.join(product.get('features', [])),
+                str(product.get('price', '')),
+                product.get('processor', ''),
+                product.get('storage', ''),
+                product.get('ype', '')
+            ]
+            searchable_text = ' '.join(filter(None, text_parts)).lower()
+            product_texts.append(searchable_text)
+        print(f"product_texts: {product_texts[:5]}")  # Debug: show first 5 texts
+        
+        # Build TF-IDF vectors
+        self.vectorizer = TfidfVectorizer(
+            stop_words='english',
+            ngram_range=(1, 2),
+            max_features=1000
+        )
+        self.product_vectors = self.vectorizer.fit_transform(product_texts)
+    
+    def _semantic_search(self, query: str, top_k: int = 5) -> List[tuple]:
+        """Perform semantic search using TF-IDF similarity"""
+        if not self.vectorizer or self.product_vectors is None:
+            return []
+        
+        # Vectorize the query
+        query_vector = self.vectorizer.transform([query.lower()])
+        
+        # Calculate cosine similarity
+        similarities = cosine_similarity(query_vector, self.product_vectors).flatten()
+        
+        # Get top matches
+        top_indices = similarities.argsort()[-top_k:][::-1]
+        
+        results = []
+        for idx in top_indices:
+            if similarities[idx] > 0.1:  # Minimum similarity threshold
+                results.append((self.products_flat[idx], similarities[idx]))
+        
+        return results
+    
+    def _analyze_customer_intent(self, customer_preferences: Dict[str, Any], conversation_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Use LLM to analyze customer intent and requirements"""
+        analysis_prompt = f"""
+        Analyze the customer's requirements and preferences to understand what they're looking for:
+        
+        Customer Preferences: {json.dumps(customer_preferences, indent=2)}
+        Conversation Context: {json.dumps(conversation_context, indent=2)}
+        
+        Based on this information, determine:
+        1. What product category are they interested in? (smartphones, laptops, headphones, or unclear)
+        2. What are their key requirements? (budget, features, use cases, brand preferences)
+        3. What is their primary use case? (work, gaming, photography, travel, etc.)
+        4. What's their experience level? (beginner, intermediate, expert)
+        5. Any specific constraints or deal-breakers?
+        
+        Create a search query that would help find the most relevant products.
+        
+        Respond in JSON format:
+        {{
+            "category": "smartphones/laptops/headphones/unclear",
+            "key_requirements": [],
+            "primary_use_case": "",
+            "experience_level": "beginner/intermediate/expert",
+            "constraints": [],
+            "search_query": "detailed search query for finding relevant products",
+            "max_budget": null,
+            "preferred_brands": []
+        }}
+        """
+        
+        try:
+            response = self.model.generate_content(analysis_prompt)
+            response_text = response.text.strip()
+            
+            # Clean JSON response
+            if response_text.startswith('```json'):
+                response_text = response_text[7:-3]
+            elif response_text.startswith('```'):
+                response_text = response_text[3:-3]
+            
+            return json.loads(response_text)
+        
+        except Exception as e:
+            print(f"Intent analysis error: {e}")
+            # Fallback analysis
+            return {
+                "category": "unclear",
+                "key_requirements": [],
+                "primary_use_case": "general",
+                "experience_level": "intermediate",
+                "constraints": [],
+                "search_query": " ".join(str(v) for v in customer_preferences.values()),
+                "max_budget": None,
+                "preferred_brands": []
+            }
+    
+    def _filter_and_rank_products(self, products: List[Dict], intent_analysis: Dict[str, Any]) -> List[Dict]:
+        """Filter and rank products based on intent analysis"""
+        filtered_products = products.copy()
+        
+        # Filter by category if specified
+        if intent_analysis["category"] != "unclear":
+            filtered_products = [p for p in filtered_products if p.get("category") == intent_analysis["category"]]
+        
+        # Filter by budget
+        max_budget = intent_analysis.get("max_budget")
+        if max_budget:
+            filtered_products = [p for p in filtered_products if p.get("price", 0) <= max_budget * 1.15]  # 15% flexibility
+        
+        # Filter by preferred brands
+        preferred_brands = intent_analysis.get("preferred_brands", [])
+        if preferred_brands:
+            filtered_products = [
+                p for p in filtered_products 
+                if any(brand.lower() in p.get("brand", "").lower() for brand in preferred_brands)
+            ]
+        
+        # Rank products using LLM
+        if len(filtered_products) > 1:
+            filtered_products = self._llm_rank_products(filtered_products, intent_analysis)
+        
+        return filtered_products
+    
+    def _llm_rank_products(self, products: List[Dict], intent_analysis: Dict[str, Any]) -> List[Dict]:
+        """Use LLM to rank products based on customer requirements"""
+        if len(products) <= 1:
+            return products
+        
+        ranking_prompt = f"""
+        Rank these products based on how well they match the customer's requirements:
+        
+        Customer Analysis: {json.dumps(intent_analysis, indent=2)}
+        
+        Products to rank:
+        {json.dumps(products, indent=2)}
+        
+        Consider:
+        1. How well each product matches the primary use case
+        2. Value for money given the budget
+        3. Feature alignment with requirements
+        4. Brand preference match
+        5. Overall suitability for the customer's experience level
+        
+        Return only the product IDs in order from best match to least match:
+        ["product_id_1", "product_id_2", "product_id_3", ...]
+        """
+        
+        try:
+            response = self.model.generate_content(ranking_prompt)
+            response_text = response.text.strip()
+            
+            # Clean response
+            if response_text.startswith('```'):
+                response_text = response_text[3:-3]
+            
+            ranked_ids = json.loads(response_text)
+            
+            # Reorder products based on ranking
+            id_to_product = {p["id"]: p for p in products}
+            ranked_products = []
+            
+            for product_id in ranked_ids:
+                if product_id in id_to_product:
+                    ranked_products.append(id_to_product[product_id])
+            
+            # Add any products that weren't ranked
+            for product in products:
+                if product["id"] not in ranked_ids:
+                    ranked_products.append(product)
+            
+            return ranked_products
+        
+        except Exception as e:
+            print(f"Ranking error: {e}")
+            return products
+    
+    def get_relevant_products(self, customer_preferences: Dict[str, Any], conversation_context: Dict[str, Any], max_results: int = 3) -> List[Dict[str, Any]]:
+        """Main method to get relevant products using agentic RAG"""
+        
+        # Step 1: Analyze customer intent
+        intent_analysis = self._analyze_customer_intent(customer_preferences, conversation_context)
+        print(f"Intent Analysis: {intent_analysis}")
+        
+        # Step 2: Perform semantic search
+        search_results = self._semantic_search(intent_analysis["search_query"], top_k=8)
+        candidate_products = [result[0] for result in search_results]
+        
+        # Step 3: Filter and rank products
+        final_products = self._filter_and_rank_products(candidate_products, intent_analysis)
+        
+        # Step 4: Return top results
+        return final_products[:max_results]
 
 class AgentState(TypedDict):
     messages: List[Dict[str, str]]
@@ -96,6 +257,10 @@ class GeminiSalesAgent:
             genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-1.5-flash')
         self.memory = MemorySaver()
+        
+        # Initialize RAG system
+        self.product_rag = ProductRAG(PRODUCT_CATALOG, self.model)
+        
         self.graph = self._build_graph()
     
     def _build_graph(self) -> StateGraph:
@@ -139,7 +304,7 @@ class GeminiSalesAgent:
         Current Context: {json.dumps(current_context, indent=2)}
         
         Extract and determine:
-        1. What new information did the customer provide?
+        1. What new information did the customer provide? (budget, preferences, use cases, constraints)
         2. What is their current need or concern?
         3. What stage are they in: greeting, exploring, comparing, deciding, objecting, or ready_to_buy?
         4. What should be the intent of the next question: discover_category, get_budget, understand_usage, clarify_preferences, show_products, address_concerns, or close_sale?
@@ -156,9 +321,8 @@ class GeminiSalesAgent:
         
         try:
             response = self.model.generate_content(analysis_prompt)
-            # Clean the response text to ensure it's valid JSON
             response_text = response.text.strip()
-            print("response_text:", response_text)
+            
             if response_text.startswith('```json'):
                 response_text = response_text[7:-3]
             elif response_text.startswith('```'):
@@ -180,8 +344,6 @@ class GeminiSalesAgent:
                 "customer_sentiment": analysis.get("customer_sentiment", "neutral")
             })
             
-            print("state after analysis:", state)
-            
         except Exception as e:
             print(f"Analysis error: {e}")
             # Fallback to simple analysis
@@ -198,14 +360,24 @@ class GeminiSalesAgent:
         stage = state["conversation_stage"]
         question_intent = state["next_question_intent"]
         
-        # Get relevant products if customer has indicated category
-        relevant_products = self._get_relevant_products(customer_prefs)
-        print("relevant_products:", relevant_products)
+        # Get relevant products using RAG system
+        relevant_products = self.product_rag.get_relevant_products(
+            customer_prefs,
+            context,
+            max_results=3
+        )
+        
+        print(f"RAG Retrieved Products: {[p['name'] for p in relevant_products]}")
         state["current_products"] = relevant_products
         
         products_info = ""
         if relevant_products:
-            products_info = f"\nAvailable products that might match: {json.dumps(relevant_products[:3], indent=2)}"
+            # Create concise product info for the prompt
+            product_summaries = []
+            for p in relevant_products:
+                summary = f"{p['name']} (${p['price']}) - {p.get('description', '')[:100]}..."
+                product_summaries.append(summary)
+            products_info = f"\nRelevant products found: {'; '.join(product_summaries)}"
         
         response_prompt = f"""
         You are a professional sales assistant. Generate a helpful response with EXACTLY ONE strategic question.
@@ -283,54 +455,13 @@ class GeminiSalesAgent:
         
         return "\n".join(formatted)
     
-    def _get_relevant_products(self, preferences: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Get products that match customer preferences"""
-        category = preferences.get("category") or preferences.get("product_type")
-        
-        if not category:
-            # Try to infer category from other preferences
-            for cat in PRODUCT_CATALOG.keys():
-                if cat in str(preferences).lower():
-                    category = cat
-                    break
-        
-        if category not in PRODUCT_CATALOG:
-            return []
-        
-        products = PRODUCT_CATALOG[category]
-        
-        # Simple filtering based on budget
-        budget = preferences.get("budget") or preferences.get("price_range")
-        if budget:
-            budget_num = self._extract_budget_number(str(budget))
-            if budget_num:
-                products = [p for p in products if p["price"] <= budget_num * 1.1]  # 10% flexibility
-        
-        # Filter by brand preference
-        brand = preferences.get("brand") or preferences.get("preferred_brand")
-        if brand:
-            products = [p for p in products if brand.lower() in p["brand"].lower()]
-        
-        return products
-    
-    def _extract_budget_number(self, budget_str: str) -> Optional[float]:
-        """Extract numeric budget from string"""
-        # Look for numbers in the string
-        numbers = re.findall(r'\d+', budget_str.lower())
-        if numbers:
-            return float(numbers[0])
-        return None
-    
     def _ensure_single_question(self, response: str) -> str:
         """Ensure response ends with exactly one question"""
-        # Count question marks
         question_count = response.count('?')
         
         if question_count == 0:
-            # Add a question if none exists
             response += " What would you like to know more about?"
         elif question_count > 1:
-            # Find the last question and use only that
             sentences = response.split('.')
             last_question = ""
             for sentence in reversed(sentences):
@@ -339,7 +470,6 @@ class GeminiSalesAgent:
                     break
             
             if last_question:
-                # Rebuild response with content before the last question + the question
                 response_parts = response.split(last_question)
                 if len(response_parts) > 1:
                     response = response_parts[0].rstrip() + " " + last_question
@@ -353,7 +483,6 @@ class GeminiSalesAgent:
         # Get or initialize state
         try:
             state_snapshot = self.graph.get_state(config)
-            print("state_snapshot:", state_snapshot)
             if state_snapshot and state_snapshot.values:
                 current_state = state_snapshot.values
             else:
@@ -373,18 +502,9 @@ class GeminiSalesAgent:
             }
         
         # Ensure all required keys exist
-        if "messages" not in current_state:
-            current_state["messages"] = []
-        if "conversation_context" not in current_state:
-            current_state["conversation_context"] = {}
-        if "customer_preferences" not in current_state:
-            current_state["customer_preferences"] = {}
-        if "current_products" not in current_state:
-            current_state["current_products"] = []
-        if "conversation_stage" not in current_state:
-            current_state["conversation_stage"] = "greeting"
-        if "next_question_intent" not in current_state:
-            current_state["next_question_intent"] = "discover_category"
+        for key in ["messages", "conversation_context", "customer_preferences", "current_products", "conversation_stage", "next_question_intent"]:
+            if key not in current_state:
+                current_state[key] = [] if key in ["messages", "current_products"] else {} if key in ["conversation_context", "customer_preferences"] else "greeting" if key == "conversation_stage" else "discover_category"
         
         # Add user message
         current_state["messages"].append({"role": "user", "content": user_message})
@@ -398,40 +518,23 @@ class GeminiSalesAgent:
 
 # Demo function
 def demo_sales_agent():
-    """Demo the sales agent without requiring API key"""
-    print("=== Gemini Sales Agent Demo ===\n")
+    """Demo the enhanced sales agent with RAG"""
+    print("=== Enhanced Gemini Sales Agent with Agentic RAG ===\n")
     
-    # Create agent (will use mock model if no API key)
+    # Create agent
     agent = GeminiSalesAgent(os.getenv("GOOGLE_API_KEY"))
-    
-    # Simulate conversation
-    conversations = [
-        "Hi, I'm looking for a new phone",
-        "I have around $800 to spend",
-        "I mostly use it for taking photos and social media",
-        "I prefer Android phones",
-        "What's the difference between the Samsung and Google options?"
-    ]
     
     session_id = "demo_session"
     
-    # for user_msg in conversations:
-    #     print(f"Customer: {user_msg}")
-    #     response = agent.chat(user_msg, session_id)
-    #     print(f"Sales Agent: {response}\n")
-
+    print("Sales Agent: Hello! I'm here to help you find the perfect product. What can I help you with today?")
+    
     while True:
-        user_msg = input("Customer: ")
+        user_msg = input("\nCustomer: ")
         if user_msg.lower() in ["exit", "quit"]:
             print("Ending demo.")
             break
         response = agent.chat(user_msg, session_id)
-        print(f"Sales Agent: {response}\n")
+        print(f"Sales Agent: {response}")
+
 if __name__ == "__main__":
-    # Uncomment to run demo
     demo_sales_agent()
-    
-    # To use with real Gemini API:
-    # agent = GeminiSalesAgent(api_key="your_gemini_api_key_here")
-    # response = agent.chat("I'm looking for a laptop for work")
-    # print(response)

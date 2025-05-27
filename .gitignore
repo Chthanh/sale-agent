@@ -1,0 +1,4 @@
+db/
+.env
+investigate/
+chroma_db/
