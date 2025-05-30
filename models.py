@@ -4,6 +4,8 @@ Data models for the Agentic RAG system
 from typing import List, Literal, Optional, Annotated
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
+from langgraph.graph import add_messages
+
 
 class RouteQuery(BaseModel):
     """Route a user query to the most relevant datasource."""
@@ -72,7 +74,7 @@ class GraphState(TypedDict):
         conversation_stage: Current stage of conversation
     """
     
-    question: str
+    question: Annotated[List, add_messages]
     clarified_question: Optional[str]
     generation: str
     documents: List[str]

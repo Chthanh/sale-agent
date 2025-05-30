@@ -57,14 +57,14 @@ class VectorDatabase:
         """Retrieve relevant documents for a query"""
         try:
             documents = self.retriever.invoke(query)
-            logging.info(f"Retrieved {len(documents)} documents for query: {query[:50]}...")
+            logging.info(f"Retrieved {len(documents)} documents for query: {query}")
             return documents
         except Exception as e:
             logging.error(f"Error retrieving documents: {e}")
             return []
     
     def add_documents(self, documents: List[Document]) -> bool:
-        """Add new documents to the vector database"""
+        """Add new documents to the vector database""" 
         try:
             self.chroma_db.add_documents(documents)
             logging.info(f"Added {len(documents)} documents to database")

@@ -3,7 +3,7 @@ RAG workflow implementation using LangGraph
 """
 from langgraph.graph import END, StateGraph, START
 from langchain.schema import Document
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 
 import logging
 
@@ -65,13 +65,14 @@ class RAGWorkflow:
         #         "not useful": "transform_query",
         #     },
         # )
+        memory = InMemorySaver()
         
-        return workflow.compile(checkpointer=MemorySaver())
+        return workflow.compile(checkpointer=memory)
     
     def retrieve(self, state: GraphState) -> GraphState:
         """Retrieve documents from vector database"""
         logger.info("---RETRIEVE---")
-        question = state["question"]
+        question = state["question"][-1].content
         
         documents = vector_db.retrieve_documents(question)
         return {"documents": documents, "question": question}
@@ -79,9 +80,10 @@ class RAGWorkflow:
     def generate(self, state: GraphState) -> GraphState:
         """Generate answer using RAG"""
         logger.info("---GENERATE---")
-        question = state["question"]
+        question = state["question"][-1].content
         documents = state["documents"]
         
+        logging.info("Generating answer for question: %s", question)
         # Format documents for context
         context = llm_handler.format_docs(documents)
         generation = llm_handler.generate_answer(context, question)
@@ -227,7 +229,6 @@ while True:
             break
         
         result = rag_workflow.run(question)
-        print("result:", result)
         print(f"Generated answer: {result.get('generation', 'No answer generated')}")
     
     except KeyboardInterrupt:
