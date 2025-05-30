@@ -3,3 +3,4 @@ db/
 investigate/
 chroma_db/
 *.log
+__pycache__/
