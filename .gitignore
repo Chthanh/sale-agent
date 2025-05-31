@@ -4,3 +4,4 @@ investigate/
 chroma_db/
 *.log
 __pycache__/
+.gradio
