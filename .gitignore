@@ -5,3 +5,4 @@ chroma_db/
 *.log
 __pycache__/
 .gradio
+.langgraph_api

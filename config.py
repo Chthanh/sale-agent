@@ -13,6 +13,7 @@ class Config:
     EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2"
     LLM_MODEL_NAME: str = "gemini-2.0-flash"
     LLM_TEMPERATURE: float = 0.0
+    OPENAI_MODEL_NAME: str = "openai:gpt-4.1-mini"
     
     # ChromaDB configurations
     CHROMA_COLLECTION_NAME: str = "product_catalog"

@@ -5,14 +5,15 @@ from typing import List, Literal, Optional, Annotated
 from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 from langgraph.graph import add_messages
+from langchain_core.messages import BaseMessage
 
 
 class RouteQuery(BaseModel):
     """Route a user query to the most relevant datasource."""
     
-    datasource: Literal["vectorstore", "web_search"] = Field(
+    datasource: Literal["vectorstore", "general_knowledge"] = Field(
         ...,
-        description="Given a user question choose to route it to web search or a vectorstore.",
+        description="Given a user question choose to route it to general knowledge or a vectorstore.",
     )
 
 
@@ -66,18 +67,12 @@ class GraphState(TypedDict):
     
     Attributes:
         question: Original user question
-        clarified_question: Question after clarification
         generation: LLM generation
         documents: List of retrieved documents
-        user_intent: Analyzed user intent
-        recommendations: Product recommendations
-        conversation_stage: Current stage of conversation
     """
     
-    question: Annotated[List, add_messages]
-    clarified_question: Optional[str]
+    remaining_steps: str
+    messages: Annotated[List[BaseMessage], add_messages]
+    question: Annotated[List[BaseMessage], add_messages]
     generation: str
     documents: List[str]
-    user_intent: Optional[UserIntent]
-    recommendations: Optional[List[ProductRecommendation]]
-    conversation_stage: Literal["initial", "clarification", "analysis", "recommendation"]
